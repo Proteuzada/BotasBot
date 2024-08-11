@@ -1,8 +1,7 @@
-Discord Bot
+BOTAS BOT
 
+Currently supports playing: YouTube and Spotify
 
-Currently functions:
+This is a personal project, use for profit is not permitted.
 
-Plays YouTube Songs
-
-Spotify and other's streamings is WIP at moment
+Playlists are not supported at the moment, there are bugs that are being worked on to be fixed
