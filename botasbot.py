@@ -6,7 +6,7 @@ import yt_dlp
 from dotenv import load_dotenv
 import subprocess
 import urllib.parse, urllib.request, re
-from asyncio import Lock
+from asyncio import Lock, Queue
 
 class MusicView(discord.ui.View):
     def __init__(self, ctx, play_next_func, thumbnail_url=None, title="", song_path=None):
@@ -77,6 +77,7 @@ def run_bot():
 
     queues = {}
     voice_clients = {}
+    task_queue = Queue()  # Criação da fila assíncrona para as tarefas
     download_lock = Lock()  # Criação do Lock para controlar os downloads
     youtube_base_url = 'https://www.youtube.com/'
     youtube_results_url = youtube_base_url + 'results?'
@@ -89,6 +90,13 @@ def run_bot():
     @client.event
     async def on_ready():
         print(f'{client.user} Está Rodando')
+        client.loop.create_task(process_tasks())  # Inicia o processamento das tarefas
+
+    async def process_tasks():
+        while True:
+            task = await task_queue.get()  # Pega a próxima tarefa na fila de forma assíncrona
+            await task  # Executa a tarefa
+            task_queue.task_done()  # Marca a tarefa como concluída
 
     async def play_next(ctx):
         if queues.get(ctx.guild.id):
@@ -96,31 +104,34 @@ def run_bot():
             await play(ctx, link=link)
 
     @client.command(name="play")
-    @commands.cooldown(1, 25, commands.BucketType.user)
+    @commands.cooldown(1, 15, commands.BucketType.user)
     async def play(ctx, *, link):
-        async with download_lock:  # Garante que apenas um download ocorra por vez
-            try:
-                voice_client = ctx.voice_client
-                if ctx.guild.id not in voice_clients or not voice_client:
-                    voice_client = await ctx.author.voice.channel.connect()
-                    voice_clients[ctx.guild.id] = voice_client
-                else:
-                    voice_client = voice_clients[ctx.guild.id]
+        async def task():
+            async with download_lock:  # Garante que apenas um download ocorra por vez
+                try:
+                    voice_client = ctx.voice_client
+                    if ctx.guild.id not in voice_clients or not voice_client:
+                        voice_client = await ctx.author.voice.channel.connect()
+                        voice_clients[ctx.guild.id] = voice_client
+                    else:
+                        voice_client = voice_clients[ctx.guild.id]
 
-                if voice_client.is_playing() or voice_client.is_paused():
-                    # Adiciona à fila se uma música já está tocando ou pausada
-                    if ctx.guild.id not in queues:
-                        queues[ctx.guild.id] = []
-                    queues[ctx.guild.id].append(link)
-                    await ctx.send(f"Adicionado à fila: {link}")
-                else:
-                    # Reproduz a música imediatamente se nada estiver tocando
-                    await start_playback(ctx, link, voice_client)
+                    if voice_client.is_playing() or voice_client.is_paused():
+                        # Adiciona à fila se uma música já está tocando ou pausada
+                        if ctx.guild.id not in queues:
+                            queues[ctx.guild.id] = []
+                        queues[ctx.guild.id].append(link)
+                        await ctx.send(f"Adicionado à fila: {link}")
+                    else:
+                        # Reproduz a música imediatamente se nada estiver tocando
+                        await start_playback(ctx, link, voice_client)
 
-            except commands.CommandOnCooldown as e:
-                await ctx.send(f"Por favor, aguarde {e.retry_after:.1f} segundos antes de usar o comando `.play` novamente.")
-            except Exception as e:
-                await ctx.send(f"Erro ao tentar tocar a música: {e}")
+                except commands.CommandOnCooldown as e:
+                    await ctx.send(f"Por favor, aguarde {e.retry_after:.1f} segundos antes de usar o comando `.play` novamente.")
+                except Exception as e:
+                    await ctx.send(f"Erro ao tentar tocar a música: {e}")
+
+        await task_queue.put(task())  # Adiciona a tarefa à fila de forma assíncrona
 
     async def start_playback(ctx, link, voice_client):
         thumbnail_url = None
